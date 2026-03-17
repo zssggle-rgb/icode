@@ -1,0 +1,31 @@
+{
+  "input_security": {
+    "enabled": true,
+    "block_keywords": [
+      "private_key",
+      "password",
+      "secret",
+      "ak",
+      "sk"
+    ],
+    "regex_patterns": [
+      "AWS_ACCESS_KEY_ID",
+      "BEGIN RSA PRIVATE KEY",
+      "eyJ[a-zA-Z0-9]{10,}"
+    ]
+  },
+  "output_security": {
+    "enabled": true,
+    "block_keywords": [
+      "private_key",
+      "password",
+      "secret"
+    ]
+  },
+  "ai_analysis": {
+    "enabled": true
+  },
+  "routing": {
+    "default_mode": "passthrough"
+  }
+}

@@ -1,0 +1,14 @@
+[groups]
+group_a = alice, admin
+group_b = bob, admin
+
+[/]
+admin = rw
+
+[repo_a:/]
+@group_a = rw
+bob = 
+
+[repo_b:/]
+@group_b = rw
+alice = 
