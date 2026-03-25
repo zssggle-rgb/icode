@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { LayoutDashboard, Activity, ShieldCheck, Settings, FileText, MonitorPlay, History, Bell, Search, User, Laptop } from 'lucide-react';
+import React from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { LayoutDashboard, ShieldCheck, Settings, FileText, MonitorPlay, History, Laptop } from 'lucide-react';
 import GatewayDashboard from './components/GatewayDashboard';
 import GatewayPolicy from './components/GatewayPolicy';
 import GatewaySecurityAudit from './components/GatewaySecurityAudit';
@@ -11,7 +12,20 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 
 const SmartCodeGatewayApp: React.FC = () => {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Derive activeTab from URL path
+  const getActiveTab = () => {
+    const path = location.pathname.replace(/^\//, '') || 'dashboard';
+    return path;
+  };
+
+  const activeTab = getActiveTab();
+
+  const handleTabChange = (tabId: string) => {
+    navigate(`/${tabId}`);
+  };
 
   const renderContent = () => {
     switch (activeTab) {
@@ -65,9 +79,9 @@ const SmartCodeGatewayApp: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex">
       {/* Sidebar */}
-      <Sidebar 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab}
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={handleTabChange}
         title="智码安全网关"
         subtitle="企业内网版"
         logo={<ShieldCheck className="text-blue-500 mr-3" size={24} />}
@@ -80,7 +94,7 @@ const SmartCodeGatewayApp: React.FC = () => {
       <div className="flex-1 ml-64 flex flex-col min-w-0">
         {/* Header */}
         <Header title={getPageTitle()} />
-        
+
         <main className="flex-1 p-6 overflow-y-auto overflow-x-hidden h-[calc(100vh-64px)]">
            <div className="max-w-[1600px] mx-auto">
               {renderContent()}
