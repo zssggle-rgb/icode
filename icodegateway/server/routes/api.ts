@@ -1,48 +1,59 @@
 import { Hono, type Context } from 'hono'
 import { db } from '../db'
 import { users, devices, sessions, auditLogs } from '../db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, desc, and, gte, sql } from 'drizzle-orm'
 import crypto from 'crypto'
-import { AuthService } from '../services/auth'
+import fs from 'fs'
+import path from 'path'
+import { GitLabAuthService } from '../services/gitlab-auth'
 import { PolicyService } from '../services/policy'
-import { ProxyService } from '../services/proxy'
-import { AnalysisService } from '../services/analysis'
-import { RiskService } from '../services/risk'
-import { AclService } from '../services/acl'
-import { LeakageService } from '../services/leakage'
+import { ModelConfigService } from '../services/model-config'
+import { AuditService } from '../services/audit'
+import { AlertService } from '../services/alert'
+import { AdoptionService } from '../services/adoption'
 
 const api = new Hono()
 
-// Session Init
+// Session file path
+const SESSION_FILE = path.join(process.env.HOME || '/root', '.icode', 'session')
+
+function ensureSessionDir() {
+  const dir = path.dirname(SESSION_FILE)
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true })
+  }
+}
+
+function saveSessionToFile(sessionData: any) {
+  ensureSessionDir()
+  fs.writeFileSync(SESSION_FILE, JSON.stringify(sessionData, null, 2))
+}
+
+// BE-1: Session Init - POST /api/v1/session/init
 api.post('/session/init', async (c: Context) => {
   const body = await c.req.json()
-  console.log('Session Init:', body)
-  
-  const { user_id, device_fingerprint, project_id, repo_id, password, svn_password } = body
-  
+  console.log('[Session Init]:', body)
+
+  const { user_id, device_fingerprint, gitlab_token, project_id, repo_id } = body
+
   if (!user_id || !device_fingerprint) {
-    return c.json({ code: 400, message: 'Missing user_id or device_fingerprint' }, 400)
+    return c.json({ code: 400, message: '缺少 user_id 或 device_fingerprint' }, 400)
   }
 
-  // SVN Authentication & Authorization
-  // Use password (from CLI) or svn_password (explicit)
-  const authPassword = svn_password || password;
+  let gitlabUser: any = null
 
-  if (authPassword) {
-    if (!AclService.authenticate(user_id, authPassword)) {
-      console.warn(`SVN Auth Failed for user: ${user_id}`)
-      return c.json({ code: 401, message: 'SVN Authentication Failed' }, 401)
+  // Authenticate via GitLab Token if provided
+  if (gitlab_token) {
+    const result = await GitLabAuthService.validateToken(gitlab_token)
+    if (!result.valid) {
+      return c.json({ code: 401, message: result.error || 'GitLab Token 无效' }, 401)
     }
-  } else {
-    return c.json({ code: 401, message: 'Missing SVN password' }, 401)
-  }
-
-  if (repo_id && !AclService.checkPermission(user_id, repo_id)) {
-    return c.json({ code: 403, message: `Access Denied to Repo: ${repo_id}` }, 403)
+    gitlabUser = result.user
+    console.log('[Session Init] GitLab user:', gitlabUser?.username)
   }
 
   // Upsert Device
-  let [device] = await db.select().from(devices).where(eq(devices.fingerprint, device_fingerprint))
+  let device = await db.select().from(devices).where(eq(devices.fingerprint, device_fingerprint)).get()
 
   if (!device) {
     try {
@@ -53,59 +64,43 @@ api.post('/session/init', async (c: Context) => {
         last_seen_at: new Date().toISOString()
       })
     } catch (e) {
-      console.error('Device insert error:', e)
+      console.error('[Session] Device insert error:', e)
     }
-    // Try fetch again
-    const devicesList = await db.select().from(devices).where(eq(devices.fingerprint, device_fingerprint))
-    device = devicesList[0]
+    device = await db.select().from(devices).where(eq(devices.fingerprint, device_fingerprint)).get()
   } else {
-    try {
-      await db.update(devices)
-        .set({ last_seen_at: new Date().toISOString() })
-        .where(eq(devices.id, device.id))
-    } catch (e) {
-      console.error('Device update error:', e)
-    }
+    await db.update(devices)
+      .set({ last_seen_at: new Date().toISOString() })
+      .where(eq(devices.id, device.id))
   }
 
-  console.log('Device selected:', device)
+  // Upsert User (use GitLab username if available)
+  const username = gitlabUser?.username || user_id
+  let user = await db.select().from(users).where(eq(users.username, username)).get()
 
-  // Upsert User
-  // Try to find by ID (if user_id is the internal ID) or username
-  let [user] = await db.select().from(users).where(eq(users.id, user_id))
-  
-  if (!user) {
-      const usersList = await db.select().from(users).where(eq(users.username, user_id))
-      user = usersList[0]
-  }
-  
   if (!user) {
     try {
       await db.insert(users).values({
-        id: user_id,
-        username: user_id,
-        password_hash: 'svn-managed',
+        id: username,
+        username: username,
+        password_hash: gitlab_token ? 'gitlab-managed' : 'unknown',
         role: 'developer'
       })
     } catch (e) {
-      console.error('User insert error:', e)
+      console.error('[Session] User insert error:', e)
     }
-    // Try fetch again by username (most reliable)
-    const usersList = await db.select().from(users).where(eq(users.username, user_id))
-    user = usersList[0]
+    user = await db.select().from(users).where(eq(users.username, username)).get()
   }
-  
-  console.log('User selected:', user)
 
   if (!user) {
-    return c.json({ code: 500, message: 'Failed to create/retrieve user' }, 500)
+    return c.json({ code: 500, message: '创建用户失败' }, 500)
   }
   if (!device) {
-    return c.json({ code: 500, message: 'Failed to create/retrieve device' }, 500)
+    return c.json({ code: 500, message: '创建设备失败' }, 500)
   }
 
+  // Create session
   const sessionId = crypto.randomUUID()
-  const token = crypto.randomUUID() // Simplified token
+  const token = crypto.randomUUID()
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
 
   await db.insert(sessions).values({
@@ -113,143 +108,302 @@ api.post('/session/init', async (c: Context) => {
     token: token,
     user_id: user.id,
     device_id: device.id,
-    project_id: project_id,
-    repo_id: repo_id,
+    project_id: project_id || null,
+    repo_id: repo_id || null,
     expires_at: expiresAt
   })
+
+  // Save session to local file (~/.icode/session) per API Contract API-1
+  const sessionData = {
+    session_id: sessionId,
+    token: token,
+    user_id: user.id,
+    device_fingerprint: device_fingerprint,
+    expires_at: expiresAt.toISOString()
+  }
+  saveSessionToFile(sessionData)
+
+  const modelProvider = ModelConfigService.getActiveProvider()
 
   return c.json({
     code: 0,
     message: 'success',
     data: {
       session_id: sessionId,
+      token: token,
       policy_version: '1.0.0',
-      project_level: 'standard'
+      model: {
+        provider: modelProvider.type,
+        model: modelProvider.model
+      }
     }
   })
 })
 
-// Chat Completions (Proxy to LLM)
-api.post('/chat/completions', async (c: Context) => {
-  const body = await c.req.json()
-  console.log('Chat Request (Proxy):', body)
-  
-  // Extract mode, default to 'managed' if not specified
-  const { session_id, prompt, context, model, upstream_url, mode } = body
+// BE-12: Stats - GET /api/v1/stats
+api.get('/stats', async (c: Context) => {
+  const period = c.req.query('period') || 'today'
 
-  const policy = PolicyService.get()
-  const targetUrl = upstream_url || policy.routing.target_url
+  const now = new Date()
+  let startDate: Date
 
-  if (!targetUrl) {
-    return c.json({ code: 400, message: 'Missing upstream_url parameter. Proxy requires a target LLM address.' }, 400)
+  if (period === '7d') {
+    startDate = new Date(now)
+    startDate.setDate(startDate.getDate() - 7)
+  } else if (period === '30d') {
+    startDate = new Date(now)
+    startDate.setMonth(startDate.getMonth() - 1)
+  } else {
+    // today
+    startDate = new Date(now)
+    startDate.setHours(0, 0, 0, 0)
   }
 
-  const activeMode = mode || policy.routing.default_mode
+  const startStr = startDate.toISOString()
 
-  const session = await AuthService.validateSession(session_id)
-  
-  if (!session) {
-    return c.json({ code: 401, message: 'Invalid or expired session' }, 401)
+  const allLogs = await db.select().from(auditLogs).all()
+  const recentLogs = allLogs.filter(l => l.created_at && l.created_at >= startStr)
+
+  const totalRequests = recentLogs.length
+  const activeDevicesResult = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(devices)
+    .where(eq(devices.status, 'active'))
+    .get()
+  const riskEvents = recentLogs.filter(l => l.risk_level === 'medium' || l.risk_level === 'high').length
+
+  // Trend data (last 7 days)
+  const trend: Array<{ time: string; requests: number; risk_events: number }> = []
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now)
+    d.setDate(d.getDate() - i)
+    const dateStr = d.toISOString().split('T')[0]
+
+    const dayLogs = allLogs.filter(l => (l.created_at || '').startsWith(dateStr))
+    const riskCount = dayLogs.filter(l => l.risk_level === 'medium' || l.risk_level === 'high').length
+
+    trend.push({ time: dateStr, requests: dayLogs.length, risk_events: riskCount })
   }
 
-  // Get user details for ACL check
-  const [user] = await db.select().from(users).where(eq(users.id, session.user_id))
-  if (!user) {
-    return c.json({ code: 401, message: 'User not found' }, 401)
+  // Top users
+  const userCounts = new Map<string, number>()
+  for (const log of recentLogs) {
+    const uid = log.user_id || 'unknown'
+    userCounts.set(uid, (userCounts.get(uid) || 0) + 1)
   }
+  const topUsers = Array.from(userCounts.entries())
+    .map(([user_id, requests]) => ({ user_id, requests, change: 0 }))
+    .sort((a, b) => b.requests - a.requests)
+    .slice(0, 5)
 
-  // 1. Risk Engine Logic (Sync)
-  const { riskLevel, reason } = RiskService.evaluate(prompt)
-  
-  // In managed mode, block high risk. In passthrough mode, allow but log.
-  if (riskLevel === 'high') {
-    if (activeMode === 'managed') {
-      return c.json({ 
-        code: 403, 
-        message: `Request blocked by Risk Engine: ${reason}`,
-        data: { content: `Error: Request blocked. Reason: ${reason}` }
-      })
-    } else {
-      console.log(`[Passthrough] High risk detected but NOT blocked: ${reason}`)
-    }
-  }
-
-  // 2. Log Audit (Sync Write)
-  const logId = crypto.randomUUID()
-  const requestId = crypto.randomUUID()
-  
-  // Prepare metadata
-  const metadata = {
-    model: model || 'unknown',
-    upstream_url: targetUrl,
-    mode: activeMode,
-    context_files_count: context?.files?.length || 0,
-    risk_reason: reason,
-    status: 'pending'
-  }
-
-  await db.insert(auditLogs).values({
-    id: logId,
-    request_id: requestId,
-    user_id: session.user_id,
-    device_id: session.device_id,
-    action: 'chat_completion',
-    prompt_summary: prompt.substring(0, 100),
-    risk_level: riskLevel,
-    metadata: JSON.stringify(metadata)
-  })
-
-  // 3. Proxy to Target LLM (Sync/Async based on stream - currently Sync)
-  const result = await ProxyService.forward(prompt, context, { 
-    model: model, 
-    upstreamUrl: targetUrl,
-    mode: activeMode as 'managed' | 'passthrough'
-  })
-
-  // 4. Leakage Detection (Output Guard)
-  // Check if output contains unauthorized code from other repos
-  const leakage = LeakageService.check(result.content, user.username)
-  if (leakage.detected) {
-    // Block high risk leakage
-    const blockedReason = `Output blocked by Leakage Detection: ${leakage.reason}`;
-    console.warn(blockedReason);
-
-    // Update audit log
-    await db.update(auditLogs)
-        .set({ 
-            risk_level: 'high', 
-            metadata: JSON.stringify({ ...metadata, status: 'blocked', blocked_reason: blockedReason }) 
-        })
-        .where(eq(auditLogs.id, logId));
-
-    return c.json({
-        code: 403,
-        message: blockedReason,
-        data: { content: `[BLOCKED] Content contains unauthorized code from ${leakage.source}` }
-    }, 403);
-  }
-
-  // 5. Async Analysis via Zhipu GLM-4.7 (Fire and forget)
-  AnalysisService.analyze(logId, prompt, result.content).catch(err => {
-    console.error('Async Analysis Failed:', err)
-  })
-
-  // 6. Update Audit Log Metadata with success status
-  const updatedMetadata = {
-    ...metadata,
-    status: 'success',
-    response_preview: result.content.substring(0, 50)
-  }
-
-  await db.update(auditLogs)
-    .set({ metadata: JSON.stringify(updatedMetadata) })
-    .where(eq(auditLogs.id, logId))
+  // Risk distribution
+  const lowCount = recentLogs.filter(l => l.risk_level === 'low').length
+  const mediumCount = recentLogs.filter(l => l.risk_level === 'medium').length
+  const highCount = recentLogs.filter(l => l.risk_level === 'high').length
 
   return c.json({
     code: 0,
     message: 'success',
-    data: result
+    data: {
+      total_requests: totalRequests,
+      active_devices: activeDevicesResult?.count || 0,
+      risk_events: riskEvents,
+      total_tokens: totalRequests * 100,
+      trend,
+      top_users: topUsers,
+      risk_distribution: {
+        low: lowCount,
+        medium: mediumCount,
+        high: highCount
+      }
+    }
   })
+})
+
+// BE-13: Audit Logs with pagination - GET /api/v1/admin/audit-logs
+api.get('/admin/audit-logs', async (c: Context) => {
+  const page = parseInt(c.req.query('page') || '1')
+  const pageSize = Math.min(parseInt(c.req.query('page_size') || '50'), 100)
+  const userId = c.req.query('user_id') || undefined
+  const riskLevel = c.req.query('risk_level') || undefined
+  const startTime = c.req.query('start_time') || undefined
+  const endTime = c.req.query('end_time') || undefined
+
+  const result = await AuditService.query({ page, pageSize, userId, riskLevel, startTime, endTime })
+
+  // Transform to API contract format
+  const logs = result.logs.map(log => ({
+    id: log.id,
+    request_id: log.request_id,
+    user_id: log.user_id,
+    device_id: log.device_id,
+    action: log.action,
+    prompt_summary: log.prompt_summary,
+    response_summary: log.response_summary,
+    risk_level: log.risk_level,
+    cross_project_attempt: log.cross_project_attempt === 1,
+    model: log.model_name,
+    provider: log.provider,
+    duration_ms: log.duration_ms,
+    metadata: (() => {
+      try {
+        return log.metadata ? JSON.parse(log.metadata as string) : {}
+      } catch {
+        return {}
+      }
+    })(),
+    created_at: log.created_at
+  }))
+
+  return c.json({
+    code: 0,
+    message: 'success',
+    data: {
+      logs,
+      pagination: result.pagination
+    }
+  })
+})
+
+// BE-10: Alert List - GET /api/v1/alerts
+api.get('/alerts', async (c: Context) => {
+  const status = c.req.query('status') as 'pending' | 'resolved' | undefined
+  const page = parseInt(c.req.query('page') || '1')
+  const pageSize = Math.min(parseInt(c.req.query('page_size') || '50'), 100)
+
+  const result = await AlertService.query({ status, page, pageSize })
+
+  return c.json({
+    code: 0,
+    message: 'success',
+    data: {
+      alerts: result.alerts,
+      pagination: result.pagination
+    }
+  })
+})
+
+// BE-11: Alert Resolve - POST /api/v1/alerts/:id/resolve
+api.post('/alerts/:id/resolve', async (c: Context) => {
+  const alertId = c.req.param('id')
+  const { note } = await c.req.json().catch(() => ({}))
+
+  await AlertService.resolve(alertId, 'admin', note)
+
+  return c.json({ code: 0, message: 'success' })
+})
+
+// BE-14: Device List - GET /api/v1/admin/devices
+api.get('/admin/devices', async (c: Context) => {
+  const deviceList = await db.select().from(devices).orderBy(desc(devices.created_at)).all()
+
+  return c.json({
+    code: 0,
+    message: 'success',
+    data: {
+      devices: deviceList.map(d => ({
+        id: d.id,
+        user_id: d.user_id,
+        status: d.status,
+        last_seen_at: d.last_seen_at,
+        created_at: d.created_at
+      })),
+      total: deviceList.length
+    }
+  })
+})
+
+// BE-14: Device Status Update - POST /api/v1/admin/devices/:id/status
+api.post('/admin/devices/:id/status', async (c: Context) => {
+  const deviceId = c.req.param('id')
+  const { status } = await c.req.json().catch(() => ({}))
+
+  if (!deviceId) {
+    return c.json({ code: 400, message: '缺少设备 ID' }, 400)
+  }
+
+  await db.update(devices)
+    .set({ status })
+    .where(eq(devices.id, deviceId))
+
+  return c.json({ code: 0, message: 'success' })
+})
+
+// BE-15: Policy Query - GET /api/v1/admin/policy
+api.get('/admin/policy', async (c: Context) => {
+  const policy = PolicyService.get()
+  return c.json({ code: 0, message: 'success', data: policy })
+})
+
+// BE-15: Policy Save - POST /api/v1/admin/policy
+api.post('/admin/policy', async (c: Context) => {
+  const body = await c.req.json()
+  const oldPolicy = PolicyService.get()
+
+  PolicyService.update(body)
+
+  // Log policy change
+  await AuditService.logPolicyChange('admin', 'update', oldPolicy, body)
+
+  return c.json({ code: 0, message: 'success', data: PolicyService.get() })
+})
+
+// Policy reload - POST /api/v1/admin/policy/reload
+api.post('/admin/policy/reload', async (c: Context) => {
+  const oldPolicy = PolicyService.get()
+  PolicyService.reload()
+  await AuditService.logPolicyChange('admin', 'reload', oldPolicy, PolicyService.get())
+
+  return c.json({ code: 0, message: 'success' })
+})
+
+// BE-16: My Usage - GET /api/v1/my-usage
+api.get('/my-usage', async (c: Context) => {
+  const authHeader = c.req.header('Authorization')
+  const token = authHeader?.replace('Bearer ', '')
+
+  let userId = 'anonymous'
+  if (token) {
+    const session = await db.select().from(sessions).where(eq(sessions.token, token)).get()
+    if (session) {
+      userId = session.user_id
+    }
+  }
+
+  const period = (c.req.query('period') || 'month') as 'week' | 'month'
+
+  const usage = await AdoptionService.getMyUsage({ userId, period })
+
+  return c.json({
+    code: 0,
+    message: 'success',
+    data: usage
+  })
+})
+
+// BE-17: Adoption Report - POST /api/v1/adoption
+api.post('/adoption', async (c: Context) => {
+  const body = await c.req.json().catch(() => ({}))
+  const { request_id, status } = body
+
+  const authHeader = c.req.header('Authorization')
+  const token = authHeader?.replace('Bearer ', '')
+
+  let userId = 'anonymous'
+  if (token) {
+    const session = await db.select().from(sessions).where(eq(sessions.token, token)).get()
+    if (session) {
+      userId = session.user_id
+    }
+  }
+
+  if (!request_id || !status) {
+    return c.json({ code: 400, message: '缺少 request_id 或 status' }, 400)
+  }
+
+  await AdoptionService.report({ request_id, status, user_id: userId })
+
+  return c.json({ code: 0, message: 'success' })
 })
 
 export default api

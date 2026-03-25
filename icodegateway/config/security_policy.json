@@ -3,10 +3,7 @@
     "enabled": true,
     "block_keywords": [
       "private_key",
-      "password",
-      "secret",
-      "ak",
-      "sk"
+      "password"
     ],
     "regex_patterns": [
       "AWS_ACCESS_KEY_ID",
@@ -17,15 +14,36 @@
   "output_security": {
     "enabled": true,
     "block_keywords": [
-      "private_key",
-      "password",
-      "secret"
+      "private_key"
     ]
+  },
+  "cross_project_detection": {
+    "enabled": true
   },
   "ai_analysis": {
     "enabled": true
   },
   "routing": {
-    "default_mode": "passthrough"
+    "default_mode": "managed",
+    "target_url": "http://localhost:18082"
+  },
+  "model": {
+    "provider": "dashscope",
+    "dashscope": {
+      "apiKey": "sk-sp-efff9d285b6c4457b8413005924b4954",
+      "model": "glm-5"
+    },
+    "ollama": {
+      "url": "http://localhost:11434",
+      "model": "qwen2.5-coder-27b-instruct"
+    },
+    "zhipu": {
+      "apiKey": "",
+      "model": "glm-4.7"
+    },
+    "minimax": {
+      "apiKey": "",
+      "model": "abab6.5s-chat"
+    }
   }
 }
