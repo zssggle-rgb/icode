@@ -12,19 +12,22 @@ const GatewayPolicy: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/v1/admin/policies')
+    fetch('/api/v1/admin/policy')
       .then(res => res.json())
       .then(data => {
         if (data.code === 0) {
           setPolicy(data.data);
         }
         setLoading(false);
+      })
+      .catch(() => {
+        setLoading(false);
       });
   }, []);
 
   const updatePolicy = (newPolicy: PolicyData) => {
     setPolicy(newPolicy);
-    fetch('/api/v1/admin/policies', {
+    fetch('/api/v1/admin/policy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newPolicy)
