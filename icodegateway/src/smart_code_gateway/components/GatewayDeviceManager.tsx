@@ -20,8 +20,8 @@ const GatewayDeviceManager: React.FC = () => {
     fetch('/api/v1/admin/devices')
       .then(res => res.json())
       .then(res => {
-        if (res.code === 0) {
-          setDevices(res.data);
+        if (res.code === 0 && res.data.devices) {
+          setDevices(res.data.devices);
         }
       })
       .finally(() => setLoading(false));
