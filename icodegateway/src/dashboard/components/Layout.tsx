@@ -35,7 +35,6 @@ export default function Layout({ children, title, actions }: LayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Find active tab based on current path
   const activeTab = tabs.find(tab => {
     if (tab.path === '/') return location.pathname === '/';
     return location.pathname.startsWith(tab.path);
@@ -43,7 +42,6 @@ export default function Layout({ children, title, actions }: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Header */}
       <header className="bg-white border-b border-slate-200">
         <div className="px-6 py-4">
           <div className="flex items-center justify-between">
@@ -54,7 +52,6 @@ export default function Layout({ children, title, actions }: LayoutProps) {
           </div>
         </div>
 
-        {/* Tab Navigation */}
         <nav className="px-6 flex gap-1">
           {tabs.map(tab => (
             <button
@@ -73,7 +70,6 @@ export default function Layout({ children, title, actions }: LayoutProps) {
         </nav>
       </header>
 
-      {/* Main Content */}
       <main className="p-6">
         {children}
       </main>

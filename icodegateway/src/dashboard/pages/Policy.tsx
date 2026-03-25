@@ -1,438 +1,234 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
-import { fetchPolicy, savePolicy, PolicyData } from '../api/client';
-import { Save, RefreshCw, Plus, Trash2 } from 'lucide-react';
+import { fetchPolicy, savePolicy, reloadPolicy, PolicyData } from '../api/client';
+import { Save } from 'lucide-react';
 
-type Provider = 'ollama' | 'dashscope' | 'zhipu';
+type ModelProvider = 'ollama' | 'dashscope' | 'zhipu';
 
-const providerLabels: Record<Provider, string> = {
-  ollama: 'Ollama',
-  dashscope: 'DashScope（阿里云）',
-  zhipu: '智谱 GLM',
-};
-
-export default function Policy() {
+export default function PolicyPage() {
   const [policy, setPolicy] = useState<PolicyData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [newKeyword, setNewKeyword] = useState('');
-  const [newRegex, setNewRegex] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const loadPolicy = useCallback(async () => {
-    setLoading(true);
-    const data = await fetchPolicy();
-    setPolicy(data);
-    setLoading(false);
-  }, []);
+  const [inputEnabled, setInputEnabled] = useState(true);
+  const [blockKeywords, setBlockKeywords] = useState<string[]>([]);
+  const [newKeyword, setNewKeyword] = useState('');
+  const [regexPatterns, setRegexPatterns] = useState<string[]>([]);
+  const [newRegex, setNewRegex] = useState('');
+  const [crossProjectEnabled, setCrossProjectEnabled] = useState(true);
+  const [modelProvider, setModelProvider] = useState<ModelProvider>('dashscope');
+  const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434');
+  const [ollamaModel, setOllamaModel] = useState('qwen2.5-coder-27b-instruct');
+  const [dashscopeKey, setDashscopeKey] = useState('');
+  const [dashscopeModel, setDashscopeModel] = useState('glm-5');
+  const [zhipuKey, setZhipuKey] = useState('');
+  const [zhipuModel, setZhipuModel] = useState('glm-5');
 
   useEffect(() => {
-    loadPolicy();
-  }, [loadPolicy]);
+    fetchPolicy().then(data => {
+      setPolicy(data);
+      setInputEnabled(data.input_security.enabled);
+      setBlockKeywords(data.input_security.block_keywords);
+      setRegexPatterns(data.input_security.regex_patterns);
+      setCrossProjectEnabled(data.cross_project_detection.enabled);
+      setModelProvider(data.model.provider);
+      if (data.model.ollama) { setOllamaUrl(data.model.ollama.url); setOllamaModel(data.model.ollama.model); }
+      if (data.model.dashscope) { setDashscopeKey(data.model.dashscope.apiKey); setDashscopeModel(data.model.dashscope.model); }
+      if (data.model.zhipu) { setZhipuKey(data.model.zhipu.apiKey); setZhipuModel(data.model.zhipu.model); }
+      setLoading(false);
+    });
+  }, []);
 
-  const updatePolicy = (path: string, value: any) => {
-    if (!policy) return;
-    const parts = path.split('.');
-    const updated = JSON.parse(JSON.stringify(policy));
-    let obj: any = updated;
-    for (let i = 0; i < parts.length - 1; i++) {
-      obj = obj[parts[i]];
-    }
-    obj[parts[parts.length - 1]] = value;
-    setPolicy(updated);
-    setSaved(false);
-  };
+  const markDirty = () => setDirty(true);
 
-  const addKeyword = (field: 'input' | 'output') => {
-    if (!newKeyword.trim() || !policy) return;
-    const key = field === 'input' ? 'block_keywords' : 'block_keywords';
-    if (field === 'input') {
-      updatePolicy('input_security.block_keywords', [...policy.input_security.block_keywords, newKeyword.trim()]);
-    } else {
-      updatePolicy('output_security.block_keywords', [...policy.output_security.block_keywords, newKeyword.trim()]);
-    }
-    setNewKeyword('');
-  };
-
-  const removeKeyword = (field: 'input' | 'output', idx: number) => {
-    if (!policy) return;
-    if (field === 'input') {
-      updatePolicy('input_security.block_keywords', policy.input_security.block_keywords.filter((_, i) => i !== idx));
-    } else {
-      updatePolicy('output_security.block_keywords', policy.output_security.block_keywords.filter((_, i) => i !== idx));
+  const handleAddKeyword = () => {
+    if (newKeyword.trim() && !blockKeywords.includes(newKeyword.trim())) {
+      setBlockKeywords([...blockKeywords, newKeyword.trim()]);
+      setNewKeyword('');
+      markDirty();
     }
   };
 
-  const addRegex = () => {
-    if (!newRegex.trim() || !policy) return;
-    updatePolicy('input_security.regex_patterns', [...policy.input_security.regex_patterns, newRegex.trim()]);
-    setNewRegex('');
+  const handleRemoveKeyword = (kw: string) => {
+    setBlockKeywords(blockKeywords.filter(k => k !== kw));
+    markDirty();
   };
 
-  const removeRegex = (idx: number) => {
-    if (!policy) return;
-    updatePolicy('input_security.regex_patterns', policy.input_security.regex_patterns.filter((_, i) => i !== idx));
+  const handleAddRegex = () => {
+    if (newRegex.trim() && !regexPatterns.includes(newRegex.trim())) {
+      setRegexPatterns([...regexPatterns, newRegex.trim()]);
+      setNewRegex('');
+      markDirty();
+    }
+  };
+
+  const handleRemoveRegex = (r: string) => {
+    setRegexPatterns(regexPatterns.filter(p => p !== r));
+    markDirty();
   };
 
   const handleSave = async () => {
-    if (!policy) return;
     setSaving(true);
+    setSaveMsg(null);
     try {
-      // Validate model config
-      if (policy.model.provider === 'dashscope' && !policy.model.dashscope?.apiKey) {
-        alert('请填写 DashScope API Key');
-        return;
-      }
-      if (policy.model.provider === 'ollama' && !policy.model.ollama?.url) {
-        alert('请填写 Ollama 服务地址');
-        return;
-      }
-      if (policy.model.provider === 'zhipu' && !policy.model.zhipu?.apiKey) {
-        alert('请填写智谱 API Key');
-        return;
-      }
-      await savePolicy(policy);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } finally {
-      setSaving(false);
+      const updatedPolicy: PolicyData = {
+        input_security: { enabled: inputEnabled, block_keywords: blockKeywords, regex_patterns: regexPatterns },
+        output_security: policy?.output_security || { enabled: true, block_keywords: [] },
+        cross_project_detection: { enabled: crossProjectEnabled },
+        model: {
+          provider: modelProvider,
+          ollama: { url: ollamaUrl, model: ollamaModel },
+          dashscope: { apiKey: dashscopeKey, model: dashscopeModel },
+          zhipu: { apiKey: zhipuKey, model: zhipuModel },
+        },
+      };
+      await savePolicy(updatedPolicy);
+      await reloadPolicy();
+      setPolicy(updatedPolicy);
+      setDirty(false);
+      setSaveMsg({ type: 'success', text: '配置已保存并热重载成功' });
+      setTimeout(() => window.location.reload(), 1000);
+    } catch (err) {
+      console.error('保存失败', err);
+      setSaveMsg({ type: 'error', text: '保存失败，请重试' });
     }
+    setSaving(false);
   };
 
-  if (loading || !policy) {
-    return (
-      <Layout title="安全策略配置">
-        <div className="flex items-center justify-center h-64 text-slate-400">加载中...</div>
-      </Layout>
-    );
+  if (loading) {
+    return <Layout title="策略配置"><div className="flex items-center justify-center h-64"><div className="text-slate-400">加载中...</div></div></Layout>;
   }
 
   return (
-    <Layout
-      title="安全策略配置"
+    <Layout title="安全策略配置"
       actions={
         <div className="flex items-center gap-3">
-          {saved && (
-            <span className="text-sm text-green-600 font-medium">✓ 保存成功</span>
-          )}
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors"
-          >
-            <Save size={14} /> {saving ? '保存中...' : '保存配置'}
+          {saveMsg && <span className={`text-sm ${saveMsg.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>{saveMsg.text}</span>}
+          <button onClick={handleSave} disabled={!dirty || saving}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${dirty ? 'bg-blue-500 hover:bg-blue-600' : 'bg-slate-300 cursor-not-allowed'}`}>
+            <Save size={16} />
+            {saving ? '保存中...' : '保存配置'}
           </button>
         </div>
-      }
-    >
+      }>
       <div className="space-y-6 max-w-4xl">
-        {/* Input Security */}
-        <div className="bg-white rounded-lg border border-slate-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-base font-semibold text-slate-800">输入扫描</h3>
-              <p className="text-sm text-slate-500 mt-1">检测用户提示词中的敏感内容</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  checked={policy.input_security.enabled}
-                  onChange={() => updatePolicy('input_security.enabled', true)}
-                  className="text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-slate-700">启用</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  checked={!policy.input_security.enabled}
-                  onChange={() => updatePolicy('input_security.enabled', false)}
-                  className="text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-slate-700">禁用</span>
-              </label>
-            </div>
+        <div className="bg-white rounded-lg border border-slate-200 p-5">
+          <h3 className="text-base font-medium text-slate-700 mb-4">输入扫描</h3>
+          <div className="flex items-center gap-6 mb-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" checked={inputEnabled} onChange={() => { setInputEnabled(true); markDirty(); }} className="w-4 h-4 text-blue-500" />
+              <span className="text-sm text-slate-700">启用</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" checked={!inputEnabled} onChange={() => { setInputEnabled(false); markDirty(); }} className="w-4 h-4 text-blue-500" />
+              <span className="text-sm text-slate-700">禁用</span>
+            </label>
           </div>
 
-          {policy.input_security.enabled && (
-            <>
-              {/* Block Keywords */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  阻断关键词（每行一个，命中后阻断请求）
-                </label>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {policy.input_security.block_keywords.map((kw, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 bg-red-50 text-red-700 rounded-full text-sm"
-                    >
-                      {kw}
-                      <button
-                        onClick={() => removeKeyword('input', idx)}
-                        className="hover:text-red-900"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={newKeyword}
-                    onChange={e => setNewKeyword(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addKeyword('input'); } }}
-                    placeholder="添加关键词后回车"
-                    className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <button
-                    onClick={() => addKeyword('input')}
-                    className="flex items-center gap-1 px-3 py-2 text-sm text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                  >
-                    <Plus size={14} /> 添加
-                  </button>
-                </div>
-              </div>
-
-              {/* Regex Patterns */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  正则模式（每行一条，命中后阻断请求）
-                </label>
-                <div className="space-y-2 mb-3">
-                  {policy.input_security.regex_patterns.map((pattern, idx) => (
-                    <div key={idx} className="flex items-center gap-2 bg-slate-50 rounded px-3 py-2">
-                      <code className="flex-1 text-sm text-slate-700 font-mono">{pattern}</code>
-                      <button
-                        onClick={() => removeRegex(idx)}
-                        className="text-slate-400 hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={newRegex}
-                    onChange={e => setNewRegex(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addRegex(); } }}
-                    placeholder="添加正则表达式后回车"
-                    className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <button
-                    onClick={addRegex}
-                    className="flex items-center gap-1 px-3 py-2 text-sm text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                  >
-                    <Plus size={14} /> 添加
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Output Security */}
-        <div className="bg-white rounded-lg border border-slate-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-base font-semibold text-slate-800">输出扫描</h3>
-              <p className="text-sm text-slate-500 mt-1">检测AI响应中的敏感内容</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  checked={policy.output_security.enabled}
-                  onChange={() => updatePolicy('output_security.enabled', true)}
-                  className="text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-slate-700">启用</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  checked={!policy.output_security.enabled}
-                  onChange={() => updatePolicy('output_security.enabled', false)}
-                  className="text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-slate-700">禁用</span>
-              </label>
-            </div>
-          </div>
-
-          {policy.output_security.enabled && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                阻断关键词（输出命中后记录告警）
-              </label>
-              <div className="flex flex-wrap gap-2 mb-3">
-                {policy.output_security.block_keywords.map((kw, idx) => (
-                  <span
-                    key={idx}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-orange-50 text-orange-700 rounded-full text-sm"
-                  >
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-slate-600 mb-2">阻断关键词（每行一个）</label>
+            <div className="border border-slate-300 rounded-lg p-3 bg-slate-50">
+              <div className="flex flex-wrap gap-2 mb-2">
+                {blockKeywords.map(kw => (
+                  <span key={kw} className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-slate-200 rounded text-sm text-slate-600">
                     {kw}
-                    <button
-                      onClick={() => removeKeyword('output', idx)}
-                      className="hover:text-orange-900"
-                    >
-                      <Trash2 size={12} />
-                    </button>
+                    <button onClick={() => handleRemoveKeyword(kw)} className="text-slate-400 hover:text-red-500">×</button>
                   </span>
                 ))}
               </div>
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newKeyword}
-                  onChange={e => setNewKeyword(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addKeyword('output'); } }}
-                  placeholder="添加关键词后回车"
-                  className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button
-                  onClick={() => addKeyword('output')}
-                  className="flex items-center gap-1 px-3 py-2 text-sm text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                >
-                  <Plus size={14} /> 添加
-                </button>
+                <input type="text" value={newKeyword} onChange={e => setNewKeyword(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddKeyword())} placeholder="添加关键词..."
+                  className="flex-1 px-2 py-1.5 text-sm border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <button onClick={handleAddKeyword} className="px-3 py-1.5 text-sm text-blue-600 border border-blue-300 rounded hover:bg-blue-50">添加</button>
               </div>
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Cross-Project Detection */}
-        <div className="bg-white rounded-lg border border-slate-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-base font-semibold text-slate-800">跨项目检测</h3>
-              <p className="text-sm text-slate-500 mt-1">自动检测提示词中出现的其他仓库名，并记录告警</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  checked={policy.cross_project_detection.enabled}
-                  onChange={() => updatePolicy('cross_project_detection.enabled', true)}
-                  className="text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-slate-700">启用</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  checked={!policy.cross_project_detection.enabled}
-                  onChange={() => updatePolicy('cross_project_detection.enabled', false)}
-                  className="text-blue-500 focus:ring-blue-500"
-                />
-                <span className="text-sm text-slate-700">禁用</span>
-              </label>
+          <div>
+            <label className="block text-sm font-medium text-slate-600 mb-2">正则模式</label>
+            <div className="border border-slate-300 rounded-lg p-3 bg-slate-50">
+              <div className="space-y-2 mb-2">
+                {regexPatterns.map((r, i) => (
+                  <div key={i} className="flex items-center justify-between px-2 py-1 bg-white border border-slate-200 rounded text-sm">
+                    <span className="font-mono text-slate-600">{r}</span>
+                    <button onClick={() => handleRemoveRegex(r)} className="text-slate-400 hover:text-red-500">×</button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input type="text" value={newRegex} onChange={e => setNewRegex(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddRegex())} placeholder="添加正则模式..."
+                  className="flex-1 px-2 py-1.5 text-sm border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <button onClick={handleAddRegex} className="px-3 py-1.5 text-sm text-blue-600 border border-blue-300 rounded hover:bg-blue-50">添加</button>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Model Configuration */}
-        <div className="bg-white rounded-lg border border-slate-200 p-6">
-          <h3 className="text-base font-semibold text-slate-800 mb-4">模型配置</h3>
+        <div className="bg-white rounded-lg border border-slate-200 p-5">
+          <h3 className="text-base font-medium text-slate-700 mb-4">跨项目检测</h3>
+          <div className="flex items-center gap-6">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" checked={crossProjectEnabled} onChange={() => { setCrossProjectEnabled(true); markDirty(); }} className="w-4 h-4 text-blue-500" />
+              <span className="text-sm text-slate-700">启用</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" checked={!crossProjectEnabled} onChange={() => { setCrossProjectEnabled(false); markDirty(); }} className="w-4 h-4 text-blue-500" />
+              <span className="text-sm text-slate-700">禁用</span>
+            </label>
+          </div>
+          <p className="mt-2 text-sm text-slate-500">自动检测提示词中出现的其他仓库名，并记录告警</p>
+        </div>
 
-          {/* Provider Radio */}
-          <div className="flex items-center gap-6 mb-6">
-            <span className="text-sm font-medium text-slate-700">接入方式：</span>
-            {(['ollama', 'dashscope', 'zhipu'] as Provider[]).map(p => (
-              <label key={p} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="provider"
-                  checked={policy.model.provider === p}
-                  onChange={() => updatePolicy('model.provider', p)}
-                  className="text-blue-500 focus:ring-blue-500"
-                />
-                <span className={`text-sm ${policy.model.provider === p ? 'text-blue-600 font-medium' : 'text-slate-600'}`}>
-                  {providerLabels[p]}
-                </span>
-              </label>
-            ))}
+        <div className="bg-white rounded-lg border border-slate-200 p-5">
+          <h3 className="text-base font-medium text-slate-700 mb-4">模型配置</h3>
+
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-slate-600 mb-3">接入方式</label>
+            <div className="flex gap-6">
+              {(['ollama', 'dashscope', 'zhipu'] as ModelProvider[]).map(provider => (
+                <label key={provider} className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="provider" checked={modelProvider === provider}
+                    onChange={() => { setModelProvider(provider); markDirty(); }} className="w-4 h-4 text-blue-500" />
+                  <span className="text-sm text-slate-700">{provider === 'ollama' ? 'Ollama' : provider === 'dashscope' ? 'DashScope' : '智谱'}</span>
+                </label>
+              ))}
+            </div>
           </div>
 
-          {/* Ollama Config */}
-          {policy.model.provider === 'ollama' && (
-            <div className="space-y-4 bg-slate-50 rounded-lg p-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">服务地址</label>
-                <input
-                  type="text"
-                  value={policy.model.ollama?.url || ''}
-                  onChange={e => updatePolicy('model.ollama.url', e.target.value)}
-                  placeholder="http://localhost:11434"
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">模型名称</label>
-                <input
-                  type="text"
-                  value={policy.model.ollama?.model || ''}
-                  onChange={e => updatePolicy('model.ollama.model', e.target.value)}
-                  placeholder="qwen2.5-coder-27b-instruct"
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+          {modelProvider === 'ollama' && (
+            <div className="space-y-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <div><label className="block text-sm font-medium text-slate-600 mb-1">服务地址</label>
+                <input type="text" value={ollamaUrl} onChange={e => { setOllamaUrl(e.target.value); markDirty(); }}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
+              <div><label className="block text-sm font-medium text-slate-600 mb-1">模型名称</label>
+                <input type="text" value={ollamaModel} onChange={e => { setOllamaModel(e.target.value); markDirty(); }}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
             </div>
           )}
 
-          {/* DashScope Config */}
-          {policy.model.provider === 'dashscope' && (
-            <div className="space-y-4 bg-slate-50 rounded-lg p-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">API Key</label>
-                <input
-                  type="password"
-                  value={policy.model.dashscope?.apiKey || ''}
-                  onChange={e => updatePolicy('model.dashscope.apiKey', e.target.value)}
-                  placeholder="sk-xxxxx"
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">模型名称</label>
-                <input
-                  type="text"
-                  value={policy.model.dashscope?.model || ''}
-                  onChange={e => updatePolicy('model.dashscope.model', e.target.value)}
-                  placeholder="glm-5"
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+          {modelProvider === 'dashscope' && (
+            <div className="space-y-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <div><label className="block text-sm font-medium text-slate-600 mb-1">API Key</label>
+                <input type="password" value={dashscopeKey} onChange={e => { setDashscopeKey(e.target.value); markDirty(); }} placeholder="sk-xxxxx"
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
+              <div><label className="block text-sm font-medium text-slate-600 mb-1">模型</label>
+                <input type="text" value={dashscopeModel} onChange={e => { setDashscopeModel(e.target.value); markDirty(); }}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
             </div>
           )}
 
-          {/* Zhipu Config */}
-          {policy.model.provider === 'zhipu' && (
-            <div className="space-y-4 bg-slate-50 rounded-lg p-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">API Key</label>
-                <input
-                  type="password"
-                  value={policy.model.zhipu?.apiKey || ''}
-                  onChange={e => updatePolicy('model.zhipu.apiKey', e.target.value)}
-                  placeholder="sk-xxxxx"
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">模型名称</label>
-                <input
-                  type="text"
-                  value={policy.model.zhipu?.model || ''}
-                  onChange={e => updatePolicy('model.zhipu.model', e.target.value)}
-                  placeholder="glm-5"
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+          {modelProvider === 'zhipu' && (
+            <div className="space-y-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <div><label className="block text-sm font-medium text-slate-600 mb-1">API Key</label>
+                <input type="password" value={zhipuKey} onChange={e => { setZhipuKey(e.target.value); markDirty(); }} placeholder="sk-xxxxx"
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
+              <div><label className="block text-sm font-medium text-slate-600 mb-1">模型</label>
+                <input type="text" value={zhipuModel} onChange={e => { setZhipuModel(e.target.value); markDirty(); }}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
             </div>
           )}
         </div>

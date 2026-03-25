@@ -1,10 +1,9 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactECharts from 'echarts-for-react';
 import * as echarts from 'echarts';
 import Layout from '../components/Layout';
 import StatCard from '../components/StatCard';
-import RiskBadge from '../components/RiskBadge';
 import { fetchStats, StatsData } from '../api/client';
 import { Smartphone, AlertTriangle, TrendingUp } from 'lucide-react';
 
@@ -30,7 +29,6 @@ export default function Overview() {
     });
   }, [period]);
 
-  // Trend chart option
   const trendOption = {
     tooltip: {
       trigger: 'axis',
@@ -72,7 +70,6 @@ export default function Overview() {
     ],
   };
 
-  // Risk distribution pie chart
   const pieOption = {
     tooltip: {
       trigger: 'item',
@@ -98,9 +95,7 @@ export default function Overview() {
           borderWidth: 2,
         },
         label: { show: false },
-        emphasis: {
-          label: { show: false },
-        },
+        emphasis: { label: { show: false } },
         data: stats
           ? [
               { value: stats.risk_distribution.high, name: '高', itemStyle: { color: '#ef4444' } },
@@ -141,19 +136,9 @@ export default function Overview() {
         </div>
       ) : stats ? (
         <div className="space-y-6">
-          {/* Stat Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <StatCard
-              label="总请求数"
-              value={stats.total_requests}
-              icon={<TrendingUp size={24} />}
-            />
-            <StatCard
-              label="活跃设备"
-              value={stats.active_devices}
-              suffix="台"
-              icon={<Smartphone size={24} />}
-            />
+            <StatCard label="总请求数" value={stats.total_requests} icon={<TrendingUp size={24} />} />
+            <StatCard label="活跃设备" value={stats.active_devices} suffix="台" icon={<Smartphone size={24} />} />
             <StatCard
               label="风险事件"
               value={stats.risk_events}
@@ -162,15 +147,12 @@ export default function Overview() {
             />
           </div>
 
-          {/* Trend Chart */}
           <div className="bg-white rounded-lg border border-slate-200 p-5">
             <h3 className="text-base font-medium text-slate-700 mb-4">近7天请求趋势</h3>
             <ReactECharts option={trendOption} style={{ height: 280 }} />
           </div>
 
-          {/* Bottom Row: Top Users + Risk Distribution */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Top 5 Users */}
             <div className="bg-white rounded-lg border border-slate-200 p-5">
               <h3 className="text-base font-medium text-slate-700 mb-4">Top 5 活跃用户</h3>
               <div className="space-y-3">
@@ -195,14 +177,9 @@ export default function Overview() {
               </div>
             </div>
 
-            {/* Risk Distribution */}
             <div className="bg-white rounded-lg border border-slate-200 p-5">
               <h3 className="text-base font-medium text-slate-700 mb-4">风险分布</h3>
-              <ReactECharts
-                option={pieOption}
-                style={{ height: 220 }}
-                onEvents={{ click: handlePieClick }}
-              />
+              <ReactECharts option={pieOption} style={{ height: 220 }} onEvents={{ click: handlePieClick }} />
             </div>
           </div>
         </div>

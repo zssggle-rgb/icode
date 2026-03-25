@@ -1,8 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import Layout from '../components/Layout';
+import RiskBadge from '../components/RiskBadge';
 import ConfirmModal from '../components/ConfirmModal';
-import { fetchAlerts, resolveAlert, Alert, AlertsResponse } from '../api/client';
-import { Bell, CheckCircle2, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
+import { fetchAlerts, resolveAlert, Alert } from '../api/client';
+import { Bell, CheckCircle } from 'lucide-react';
+
+type AlertStatus = 'pending' | 'resolved';
+type AlertTab = AlertStatus;
 
 const alertTypeLabels: Record<string, string> = {
   cross_project_attempt: '跨项目访问尝试',
@@ -10,252 +14,172 @@ const alertTypeLabels: Record<string, string> = {
   high_risk_leakage: '高风险泄露告警',
 };
 
-export default function Alerts() {
-  const [tab, setTab] = useState<'pending' | 'resolved'>('pending');
-  const [alerts, setAlerts] = useState<Alert[]>([]);
+const alertTypeColors: Record<string, string> = {
+  cross_project_attempt: 'text-red-600',
+  high_risk_keyword: 'text-red-600',
+  high_risk_leakage: 'text-red-600',
+};
+
+export default function AlertsPage() {
+  const [activeTab, setActiveTab] = useState<AlertTab>('pending');
+  const [pendingAlerts, setPendingAlerts] = useState<Alert[]>([]);
+  const [resolvedAlerts, setResolvedAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [resolvedCount, setResolvedCount] = useState(0);
-  const [resolveModal, setResolveModal] = useState<{ open: boolean; alert: Alert | null }>({ open: false, alert: null });
-  const [resolveNote, setResolveNote] = useState('');
-  const [resolving, setResolving] = useState(false);
+  const [processModal, setProcessModal] = useState<{ open: boolean; alert: Alert | null }>({ open: false, alert: null });
+  const [processNote, setProcessNote] = useState('');
+  const [processing, setProcessing] = useState(false);
 
   const loadAlerts = useCallback(async () => {
     setLoading(true);
     const [pending, resolved] = await Promise.all([
-      fetchAlerts('pending', 1),
-      fetchAlerts('resolved', 1),
+      fetchAlerts('pending'),
+      fetchAlerts('resolved'),
     ]);
-    setAlerts(tab === 'pending' ? pending.alerts : resolved.alerts);
-    setPendingCount(pending.pagination.total);
-    setResolvedCount(resolved.pagination.total);
+    setPendingAlerts(pending.alerts);
+    setResolvedAlerts(resolved.alerts);
     setLoading(false);
-  }, [tab]);
+  }, []);
 
   useEffect(() => {
     loadAlerts();
   }, [loadAlerts]);
 
   const handleResolve = async () => {
-    if (!resolveModal.alert) return;
-    setResolving(true);
+    if (!processModal.alert) return;
+    setProcessing(true);
     try {
-      await resolveAlert(resolveModal.alert.id, resolveNote);
-      setResolveModal({ open: false, alert: null });
-      setResolveNote('');
-      loadAlerts();
-    } finally {
-      setResolving(false);
+      await resolveAlert(processModal.alert.id, processNote);
+      await loadAlerts();
+      setProcessModal({ open: false, alert: null });
+      setProcessNote('');
+    } catch (err) {
+      console.error('处理告警失败', err);
     }
+    setProcessing(false);
   };
 
   const formatTime = (iso: string) => {
     const d = new Date(iso);
-    return d.toLocaleString('zh-CN');
+    return d.toLocaleString('zh-CN', { hour12: false });
   };
+
+  const alerts = activeTab === 'pending' ? pendingAlerts : resolvedAlerts;
 
   return (
     <Layout title="告警中心">
-      {/* Tab Counts */}
-      <div className="flex items-center gap-4 mb-4">
-        <div className="flex items-center gap-2">
-          <Bell size={18} className="text-slate-400" />
-          <button
-            onClick={() => setTab('pending')}
-            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-              tab === 'pending'
-                ? 'bg-blue-500 text-white'
-                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            未处理 {pendingCount > 0 && <span className="ml-1 text-red-400">({pendingCount}条)</span>}
-          </button>
-          <button
-            onClick={() => setTab('resolved')}
-            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-              tab === 'resolved'
-                ? 'bg-blue-500 text-white'
-                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            已处理 {resolvedCount > 0 && <span className="ml-1 text-slate-400">({resolvedCount}条)</span>}
-          </button>
-        </div>
+      <div className="flex gap-4 mb-6">
+        <button
+          onClick={() => setActiveTab('pending')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+            activeTab === 'pending'
+              ? 'bg-red-50 text-red-600 border border-red-200'
+              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <Bell size={18} />
+          未处理
+          {pendingAlerts.length > 0 && (
+            <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingAlerts.length}</span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveTab('resolved')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+            activeTab === 'resolved'
+              ? 'bg-green-50 text-green-600 border border-green-200'
+              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <CheckCircle size={18} />
+          已处理
+          <span className="text-slate-400 text-sm">({resolvedAlerts.length})</span>
+        </button>
       </div>
 
-      {/* Alert List */}
-      <div className="space-y-3">
+      <div className="space-y-4">
         {loading ? (
           <div className="bg-white rounded-lg border border-slate-200 p-12 text-center text-slate-400">加载中...</div>
         ) : alerts.length === 0 ? (
           <div className="bg-white rounded-lg border border-slate-200 p-12 text-center text-slate-400">
-            <CheckCircle2 size={40} className="mx-auto mb-3 text-green-300" />
-            <p>暂无{tab === 'pending' ? '未处理' : '已处理'}告警</p>
+            {activeTab === 'pending' ? '暂无未处理告警' : '暂无已处理告警'}
           </div>
         ) : (
           alerts.map(alert => (
             <div key={alert.id} className="bg-white rounded-lg border border-slate-200 overflow-hidden">
-              {/* Alert Header */}
-              <div
-                className="px-5 py-4 cursor-pointer hover:bg-slate-50 transition-colors"
-                onClick={() => setExpandedId(expandedId === alert.id ? null : alert.id)}
-              >
+              <div className="px-5 py-4 cursor-pointer hover:bg-slate-50" onClick={() => setExpandedId(expandedId === alert.id ? null : alert.id)}>
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3">
-                    <div className="mt-0.5">
-                      {tab === 'pending' ? (
-                        <AlertTriangle size={18} className="text-red-500" />
-                      ) : (
-                        <CheckCircle2 size={18} className="text-green-500" />
-                      )}
-                    </div>
+                    <span className="text-xl">🔴</span>
                     <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                          tab === 'pending' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                        }`}>
-                          {tab === 'pending' ? '未处理' : '已处理'}
+                      <div className="flex items-center gap-2">
+                        <span className={`font-medium ${alertTypeColors[alert.type]}`}>
+                          [{activeTab === 'pending' ? '未处理' : '已处理'}]
                         </span>
-                        <span className="text-sm font-medium text-slate-700">
-                          {alertTypeLabels[alert.type] || alert.type}
-                        </span>
+                        <span className="font-medium text-slate-700">{alertTypeLabels[alert.type]}</span>
                       </div>
-                      <p className="text-sm text-slate-500">
-                        <span className="text-slate-700 font-medium">{alert.user_id}</span>
-                        {' — '}
-                        <span className="font-mono text-xs">{alert.device_id.slice(0, 16)}...</span>
-                      </p>
-                      <p className="text-sm text-slate-500 mt-1">
-                        {alert.detail.prompt_summary || alert.detail.response_summary || '-'}
-                      </p>
+                      <div className="mt-1 text-sm text-slate-500">
+                        <span>{alert.user_id}</span>
+                        <span className="mx-2">—</span>
+                        <span className="font-mono">{alert.device_id.slice(0, 16)}...</span>
+                      </div>
+                      <div className="mt-2 text-sm text-slate-600">
+                        {alert.type === 'cross_project_attempt' && (
+                          <span>提示词涉及 {alert.detail.target_repo}（该用户{alert.detail.user_permission === 'none' ? '无权限访问' : '有权限'}）</span>
+                        )}
+                        {alert.type === 'high_risk_keyword' && (
+                          <span>命中关键词：{alert.detail.keyword}</span>
+                        )}
+                        {alert.type === 'high_risk_leakage' && (
+                          <span>响应含敏感词：{alert.detail.keyword}</span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-400">时间：{formatTime(alert.created_at)}</div>
                     </div>
                   </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <div className="text-xs text-slate-400">{formatTime(alert.created_at)}</div>
-                    {expandedId === alert.id ? (
-                      <ChevronUp size={16} className="text-slate-400" />
-                    ) : (
-                      <ChevronDown size={16} className="text-slate-400" />
-                    )}
-                  </div>
-                </div>
-
-                {/* Quick Actions for Pending */}
-                {tab === 'pending' && expandedId !== alert.id && (
-                  <div className="mt-3 flex items-center gap-2">
+                  {activeTab === 'pending' && (
                     <button
-                      onClick={e => { e.stopPropagation(); setExpandedId(alert.id); }}
-                      className="px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                    >
-                      查看详情
-                    </button>
-                    <button
-                      onClick={e => { e.stopPropagation(); setResolveModal({ open: true, alert }); }}
-                      className="px-3 py-1.5 text-xs font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 transition-colors"
+                      onClick={e => { e.stopPropagation(); setProcessModal({ open: true, alert }); }}
+                      className="px-3 py-1.5 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 transition-colors"
                     >
                       标记已处理
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
-              {/* Expanded Detail */}
               {expandedId === alert.id && (
-                <div className="px-5 pb-5 border-t border-slate-100 pt-4 bg-slate-50/50">
-                  <div className="grid grid-cols-2 gap-4 text-sm mb-4">
-                    <div>
-                      <span className="text-slate-500">告警类型：</span>
-                      <span className="text-slate-700">{alertTypeLabels[alert.type] || alert.type}</span>
+                <div className="px-5 py-4 bg-slate-50 border-t border-slate-200">
+                  <div className="text-sm space-y-2">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div><span className="text-slate-500">告警类型：</span><span className="ml-1">{alertTypeLabels[alert.type]}</span></div>
+                      <div><span className="text-slate-500">触发时间：</span><span className="ml-1">{formatTime(alert.created_at)}</span></div>
+                      <div><span className="text-slate-500">用户：</span><span className="ml-1">{alert.user_id}</span></div>
+                      <div><span className="text-slate-500">设备：</span><span className="ml-1 font-mono text-xs">{alert.device_id}</span></div>
                     </div>
-                    <div>
-                      <span className="text-slate-500">触发时间：</span>
-                      <span className="text-slate-700">{formatTime(alert.created_at)}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500">用户：</span>
-                      <span className="text-slate-700">{alert.user_id}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500">设备：</span>
-                      <span className="text-slate-700 font-mono text-xs">{alert.device_id}</span>
-                    </div>
-                  </div>
-
-                  {/* Type-specific details */}
-                  {alert.type === 'cross_project_attempt' && (
-                    <div className="bg-white rounded border border-slate-200 p-3 mb-4">
-                      <div className="text-xs font-medium text-slate-500 mb-2">触发内容：</div>
-                      <div className="text-sm text-slate-700 mb-2">提示词摘要：{alert.detail.prompt_summary}</div>
-                      <div className="text-sm text-slate-700 mb-1">
-                        <span className="text-slate-500">目标仓库：</span>{alert.detail.target_repo}
-                      </div>
-                      <div className="text-sm text-slate-700">
-                        <span className="text-slate-500">用户权限：</span>
-                        <span className={alert.detail.user_permission === 'none' ? 'text-red-600' : 'text-green-600'}>
-                          {alert.detail.user_permission === 'none' ? '无权限' : alert.detail.user_permission}
-                        </span>
+                    <div className="border-t border-slate-200 pt-3 mt-3">
+                      <div className="font-medium text-slate-700 mb-2">触发内容：</div>
+                      <div className="bg-white rounded border border-slate-200 p-3">
+                        <div className="text-slate-500 text-xs mb-1">提示词摘要：</div>
+                        <div className="text-slate-700">{alert.detail.prompt_summary || '-'}</div>
+                        {alert.detail.target_repo && (
+                          <><div className="text-slate-500 text-xs mt-2 mb-1">目标仓库：</div><div className="text-slate-700">{alert.detail.target_repo}</div></>
+                        )}
+                        {alert.detail.keyword && (
+                          <><div className="text-slate-500 text-xs mt-2 mb-1">命中关键词：</div><div className="text-slate-700">{alert.detail.keyword}</div></>
+                        )}
                       </div>
                     </div>
-                  )}
-
-                  {alert.type === 'high_risk_keyword' && (
-                    <div className="bg-white rounded border border-slate-200 p-3 mb-4">
-                      <div className="text-xs font-medium text-slate-500 mb-2">触发内容：</div>
-                      <div className="text-sm text-slate-700 mb-2">提示词摘要：{alert.detail.prompt_summary}</div>
-                      <div className="text-sm text-slate-700">
-                        <span className="text-slate-500">命中关键词：</span>
-                        <span className="text-red-600 font-mono">{alert.detail.keyword}</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {alert.type === 'high_risk_leakage' && (
-                    <div className="bg-white rounded border border-slate-200 p-3 mb-4">
-                      <div className="text-xs font-medium text-slate-500 mb-2">触发内容：</div>
-                      <div className="text-sm text-slate-700">
-                        <span className="text-slate-500">命中关键词：</span>
-                        <span className="text-red-600 font-mono">{alert.detail.keyword}</span>
-                      </div>
-                      <div className="text-sm text-slate-700 mt-2">
-                        <span className="text-slate-500">响应摘要：</span>{alert.detail.response_summary}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Resolved info */}
-                  {tab === 'resolved' && (
-                    <div className="bg-green-50 rounded border border-green-200 p-3 mb-4">
-                      <div className="text-sm text-green-700">
-                        <span className="font-medium">处理人：</span>{alert.resolved_by}
-                        <span className="mx-3">|</span>
-                        <span className="font-medium">处理时间：</span>{alert.resolved_at ? formatTime(alert.resolved_at) : '-'}
-                      </div>
-                      {alert.note && (
-                        <div className="text-sm text-green-700 mt-1">
-                          <span className="font-medium">备注：</span>{alert.note}
+                    {activeTab === 'resolved' && alert.note && (
+                      <div className="border-t border-slate-200 pt-3 mt-3">
+                        <div className="grid grid-cols-2 gap-2 text-slate-500 text-xs">
+                          <span>处理人：{alert.resolved_by}</span>
+                          <span>处理时间：{alert.resolved_at ? formatTime(alert.resolved_at) : '-'}</span>
                         </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  {tab === 'pending' && (
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => setResolveModal({ open: true, alert })}
-                        className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 transition-colors"
-                      >
-                        确认处理
-                      </button>
-                      <button
-                        onClick={() => setExpandedId(null)}
-                        className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
-                      >
-                        收起
-                      </button>
-                    </div>
-                  )}
+                        <div className="mt-2"><span className="text-slate-500">备注：</span><span className="ml-1 text-slate-700">{alert.note}</span></div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -263,17 +187,20 @@ export default function Alerts() {
         )}
       </div>
 
-      {/* Resolve Modal */}
       <ConfirmModal
-        isOpen={resolveModal.open}
+        isOpen={processModal.open}
         title="处理告警"
-        message={<span>确认处理此告警？可填写处理备注。</span>}
-        confirmText={resolving ? '处理中...' : '确认处理'}
+        message={
+          <div>
+            <p className="mb-3">确定要处理此告警吗？</p>
+            <label className="block text-sm font-medium text-slate-700 mb-1">添加备注（可选）</label>
+            <textarea value={processNote} onChange={e => setProcessNote(e.target.value)} placeholder="输入处理备注..."
+              rows={3} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+          </div>
+        }
+        confirmText="确认处理"
         onConfirm={handleResolve}
-        onCancel={() => { setResolveModal({ open: false, alert: null }); setResolveNote(''); }}
-        showInput
-        inputLabel="处理备注（可选）"
-        inputPlaceholder="请输入处理备注..."
+        onCancel={() => { setProcessModal({ open: false, alert: null }); setProcessNote(''); }}
       />
     </Layout>
   );

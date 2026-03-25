@@ -67,7 +67,6 @@ export async function fetchStats(period: 'today' | '7d' | '30d' = 'today'): Prom
   try {
     return await request<StatsData>(`/stats?period=${period}`);
   } catch {
-    // Mock data for development
     return getMockStats();
   }
 }
