@@ -1,0 +1,21 @@
+对 newicode 项目执行 gstack /qa 技能做后端 API 集成测试。
+
+项目路径：/Users/sjs/newicode
+后端代码：icodegateway/
+当前分支：feat/integration
+后端服务已运行在 localhost:18081
+
+测试范围：
+1. 先跑单元测试：cd /Users/sjs/newicode/icodegateway && npx vitest run
+2. 用 curl 测试核心 API：
+   - GET http://localhost:18081/api/v1/stats
+   - GET http://localhost:18081/api/v1/alerts
+   - POST http://localhost:18081/api/v1/session/init（body: {"gitlab_token": "test"})
+   - POST http://localhost:18081/v1/chat/completions（body: {"model": "glm-5", "messages": [{"role": "user", "content": "hello"}]})
+
+/qa 技能特点：
+- 测试发现问题会自动修复代码
+- 修复后自动提交 git
+- 报告测试结果
+
+请执行 /qa skill。
