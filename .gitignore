@@ -39,3 +39,4 @@ sqlite.db
 .icode_session.json
 mock_llm.log
 server.log
+.gstack/
