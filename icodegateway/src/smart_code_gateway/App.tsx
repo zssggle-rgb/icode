@@ -1,12 +1,13 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, ShieldCheck, Settings, FileText, MonitorPlay, History, Laptop } from 'lucide-react';
+import { LayoutDashboard, ShieldCheck, Settings, FileText, MonitorPlay, History, Laptop, Bell } from 'lucide-react';
 import GatewayDashboard from './components/GatewayDashboard';
 import GatewayPolicy from './components/GatewayPolicy';
 import GatewaySecurityAudit from './components/GatewaySecurityAudit';
 import GatewayAgentMonitor from './components/GatewayAgentMonitor';
 import GatewayAuditLogs from './components/GatewayAuditLogs';
 import GatewayDeviceManager from './components/GatewayDeviceManager';
+import GatewayAlerts from './components/GatewayAlerts';
 
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -41,6 +42,8 @@ const SmartCodeGatewayApp: React.FC = () => {
         return <GatewayAuditLogs />;
       case 'device-manager':
         return <GatewayDeviceManager />;
+      case 'alerts':
+        return <GatewayAlerts />;
       default:
         return <GatewayDashboard />;
     }
@@ -53,6 +56,7 @@ const SmartCodeGatewayApp: React.FC = () => {
       'agent-monitor': '智能体监控',
       'security-audit': '安全审计',
       'audit-logs': '审计日志',
+      'alerts': '告警中心',
       'device-manager': '设备管理',
       'settings': '系统设置',
     };
@@ -64,6 +68,7 @@ const SmartCodeGatewayApp: React.FC = () => {
     { id: 'agent-monitor', label: '智能体监控', icon: <MonitorPlay size={20} /> },
     { id: 'security-audit', label: '安全合规', icon: <ShieldCheck size={20} /> },
     { id: 'audit-logs', label: '审计日志', icon: <History size={20} /> },
+    { id: 'alerts', label: '告警中心', icon: <Bell size={20} /> },
     { id: 'device-manager', label: '设备管理', icon: <Laptop size={20} /> },
     { id: 'policy', label: '策略管理', icon: <FileText size={20} /> },
     { id: 'settings', label: '系统设置', icon: <Settings size={20} /> },
